@@ -1,0 +1,13 @@
+{
+  "$schema": "https://manufact.dev/schemas/app-v1.json",
+  "sdk": 1,
+  "slug": "live-iss-tracker",
+  "name": { "en": "Live ISS Tracker", "zh": "国际空间站实时追踪" },
+  "icon": "./icon.svg",
+  "window": { "w": 960, "h": 640, "minW": 480, "minH": 360, "singleton": true },
+  "permissions": {
+    "domains": ["api.wheretheiss.at"]
+  },
+  "devices": { "touch": true, "keyboard": "optional" },
+  "splash": { "style": "icon-pulse", "background": "theme" }
+}
