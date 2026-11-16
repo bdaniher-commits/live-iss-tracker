@@ -6,7 +6,10 @@
   "icon": "./icon.svg",
   "window": { "w": 960, "h": 640, "minW": 480, "minH": 360, "singleton": true },
   "permissions": {
-    "domains": ["api.wheretheiss.at"]
+    "domains": ["api.wheretheiss.at"],
+    "cloud": {
+      "db": { "purpose": "Keep a shared history of the ISS positions you record" }
+    }
   },
   "devices": { "touch": true, "keyboard": "optional" },
   "splash": { "style": "icon-pulse", "background": "theme" }

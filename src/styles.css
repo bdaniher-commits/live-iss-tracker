@@ -374,6 +374,99 @@ body {
   font-size: 11.5px;
 }
 
+/* ── snapshot history ───────────────────────────────────── */
+
+.history {
+  grid-column: 1 / -1;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.history-head h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.history-sub {
+  font-size: 11.5px;
+  color: var(--sub);
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.history-table th {
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sub);
+  background: color-mix(in srgb, var(--card) 55%, var(--bg));
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.history-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.history-table .num {
+  text-align: right;
+}
+
+.history-table th.num {
+  text-align: right;
+}
+
+.history-table .cell-time {
+  color: var(--sub);
+}
+
+.history-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--sub);
+}
+
+.history-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
 /* ── footer ─────────────────────────────────────────────── */
 
 .foot {

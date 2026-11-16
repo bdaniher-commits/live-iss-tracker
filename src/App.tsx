@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { app, on, fetchExternal, type AppContext } from "./manufact-sdk";
+import { app, cloud, on, fetchExternal, type AppContext } from "./manufact-sdk";
 import { WORLD_LAND_PATH } from "./worldLand";
 import "./styles.css";
 
@@ -8,11 +8,79 @@ const ENDPOINT = "https://api.wheretheiss.at/v1/satellites/25544";
 type Position = {
   latitude: number;
   longitude: number;
+  altitude: number | null;
+  velocity: number | null;
   /** Unix seconds, exactly as reported by the API. */
   timestamp: number;
   /** When this app received the response (ms). */
   receivedAt: number;
 };
+
+/** One row of the app's private iss_snapshots table. */
+type Snapshot = {
+  timestamp: number;
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  velocity: number | null;
+};
+
+/** A row of the App Cloud iss_snapshots table (bigint may arrive as a string). */
+type SnapshotRow = {
+  snapshot_ts: number | string;
+  latitude: number | string;
+  longitude: number | string;
+  altitude: number | string | null;
+  velocity: number | string | null;
+};
+
+const SELECT_SNAPSHOTS =
+  "SELECT snapshot_ts, latitude, longitude, altitude, velocity FROM iss_snapshots ORDER BY id DESC LIMIT 10";
+
+const INSERT_SNAPSHOT =
+  "INSERT INTO iss_snapshots (snapshot_ts, latitude, longitude, altitude, velocity) VALUES (?, ?, ?, ?, ?)";
+
+/** Keep only the newest 500 rows of the current user's history. */
+const PRUNE_SNAPSHOTS = `DELETE FROM iss_snapshots
+  WHERE owner = app.user_id()
+    AND id NOT IN (
+      SELECT id FROM iss_snapshots
+       WHERE owner = app.user_id()
+       ORDER BY id DESC
+       LIMIT 500
+    )`;
+
+function toSnapshot(row: SnapshotRow): Snapshot {
+  const num = (v: number | string) => Number(v);
+  const opt = (v: number | string | null) =>
+    v === null || v === undefined ? null : Number(v);
+  return {
+    timestamp: num(row.snapshot_ts),
+    latitude: num(row.latitude),
+    longitude: num(row.longitude),
+    altitude: opt(row.altitude),
+    velocity: opt(row.velocity),
+  };
+}
+
+function formatRowTime(unixSeconds: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(unixSeconds * 1000));
+}
+
+function formatAltitude(km: number | null): string {
+  return km === null ? "—" : `${km.toFixed(1)} km`;
+}
+
+function formatVelocity(kmh: number | null, locale: string): string {
+  if (kmh === null) return "—";
+  return `${Math.round(kmh).toLocaleString(locale)} km/h`;
+}
 
 type Problem = {
   /** What failed, in the user's terms. */
@@ -57,8 +125,25 @@ export function App() {
   const [position, setPosition] = useState<Position | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [loading, setLoading] = useState(false);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [storeProblem, setStoreProblem] = useState<string | null>(null);
   const requestId = useRef(0);
   const started = useRef(false);
+
+  const describeStoreError = (error: unknown): string => {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "unknown error");
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+    return code ? `${code}: ${message}` : message;
+  };
+
+  const loadSnapshots = useCallback(async () => {
+    const result = await cloud.db.query(SELECT_SNAPSHOTS);
+    setSnapshots(cloud.db.rows<SnapshotRow>(result).map(toSnapshot));
+  }, []);
 
   useEffect(() => {
     void app.ready().then((c) => {
@@ -124,7 +209,40 @@ export function App() {
         return;
       }
 
-      setPosition({ latitude, longitude, timestamp, receivedAt: Date.now() });
+      const altitude = numberFrom(body, "altitude");
+      const velocity = numberFrom(body, "velocity");
+
+      setPosition({
+        latitude,
+        longitude,
+        altitude,
+        velocity,
+        timestamp,
+        receivedAt: Date.now(),
+      });
+
+      // Save this fix to App Cloud (insert + prune to the newest 500 in one
+      // transaction), then show the ten most recent rows. A storage failure
+      // never hides the live reading.
+      if (!cloud.available()) {
+        setStoreProblem(
+          "App Cloud needs MoteOS bridge 1.8 — update the system to keep a shared history.",
+        );
+      } else {
+        try {
+          await cloud.db.batch([
+            {
+              sql: INSERT_SNAPSHOT,
+              params: [timestamp, latitude, longitude, altitude, velocity],
+            },
+            { sql: PRUNE_SNAPSHOTS },
+          ]);
+          await loadSnapshots();
+          setStoreProblem(null);
+        } catch (error) {
+          setStoreProblem(describeStoreError(error));
+        }
+      }
     } catch (error) {
       if (id !== requestId.current) return;
       const message =
@@ -148,6 +266,24 @@ export function App() {
     started.current = true;
     void refresh();
   }, [ctx, refresh]);
+
+  // Show the history saved by earlier sessions before (or without) a refresh.
+  useEffect(() => {
+    if (!ctx || !cloud.available()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await loadSnapshots();
+        if (!cancelled) setStoreProblem(null);
+      } catch (error) {
+        if (!cancelled) setStoreProblem(describeStoreError(error));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, loadSnapshots]);
 
   // First screen is on screen: let the host fade out its loading animation.
   useEffect(() => {
@@ -297,11 +433,63 @@ export function App() {
             </p>
           )}
         </section>
+
+        <section className="panel history" aria-label="Recent snapshots">
+          <div className="history-head">
+            <h2>Recent snapshots</h2>
+            <span className="history-sub">
+              Last 10 saved fixes · stored in this app's App Cloud
+            </span>
+          </div>
+
+          {snapshots.length === 0 ? (
+            <p className="history-empty">
+              {!cloud.available()
+                ? "App Cloud is unavailable on this MoteOS version — history cannot be shown."
+                : "No snapshots yet — every successful refresh adds one."}
+            </p>
+          ) : (
+            <div className="table-scroll">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th scope="col">API time</th>
+                    <th scope="col" className="num">Latitude</th>
+                    <th scope="col" className="num">Longitude</th>
+                    <th scope="col" className="num">Altitude</th>
+                    <th scope="col" className="num">Velocity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {snapshots.map((snap, index) => (
+                    <tr key={`${snap.timestamp}-${index}`}>
+                      <td className="cell-time">
+                        {formatRowTime(snap.timestamp, locale)}
+                      </td>
+                      <td className="num">{formatCoord(snap.latitude, "lat")}</td>
+                      <td className="num">{formatCoord(snap.longitude, "lon")}</td>
+                      <td className="num">{formatAltitude(snap.altitude)}</td>
+                      <td className="num">{formatVelocity(snap.velocity, locale)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {storeProblem && (
+            <p className="history-error" role="status">
+              History store error — {storeProblem}
+            </p>
+          )}
+        </section>
       </main>
 
       <footer className="foot">
         <span className="foot-endpoint">{ENDPOINT}</span>
-        <span className="foot-note">No API key · no location access · no stored data</span>
+        <span className="foot-note">
+          No API key · no location access · snapshot history in App Cloud
+        </span>
       </footer>
     </div>
   );
